@@ -1,0 +1,9 @@
+java gitlet.Main init
+cp wug.txt f.txt
+java gitlet.Main status
+java gitlet.Main add f.txt
+java gitlet.Main commit "add f"
+cp notwug.txt f.txt
+java gitlet.Main status
+rm f.txt
+java gitlet.Main status
