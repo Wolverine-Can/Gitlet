@@ -1,8 +1,5 @@
 package gitlet;
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.IOException;
-import java.io.Serializable;
+import java.io.*;
 import java.util.*;
 
 public class CommitTree implements Serializable {
@@ -14,7 +11,8 @@ public class CommitTree implements Serializable {
     Set<String> removedFiles;
     Set<String> untrackedFiles;
     Map<String, CommitNode> idToCommits;
-
+    Map<String, String> remoteLoc;
+    String localBlobDir = ".gitlet/blobs/";
     public CommitTree() {
         initialCommit = new CommitNode(null, "initial commit", new HashMap<>());
         head = initialCommit;
@@ -24,7 +22,10 @@ public class CommitTree implements Serializable {
         removedFiles = new HashSet<>();
         untrackedFiles = new HashSet<>();
         idToCommits = new HashMap<>(){{put(initialCommit.ID(), initialCommit);}};
+        remoteLoc = new HashMap<>();
     }
+
+    // ******LOCAL FEATURES*******************
 
     public void add(String fileName) {
         File file = new File(fileName);
@@ -70,7 +71,6 @@ public class CommitTree implements Serializable {
         }
         stagingArea.remove(fileName);
         if (head.blobs().containsKey(fileName)) {
-            head.blobs().remove(fileName);
             Utils.restrictedDelete(file);
             removedFiles.add(fileName);
         }
@@ -178,7 +178,7 @@ public class CommitTree implements Serializable {
                 System.out.println("File does not exist in that commit.");
                 return;
             }
-            writeFile(fileName, head.blobs().get(fileName));
+            writeFile(fileName, head.blobs().get(fileName), localBlobDir);
         } else if (args.length == 3 && args[1].equals("--")) {
             CommitNode targetCommit = idToCommits.get(args[0]);
             String fileName = args[2];
@@ -186,28 +186,28 @@ public class CommitTree implements Serializable {
                 System.out.println("File does not exist in that commit.");
                 return;
             }
-            writeFile(fileName, targetCommit.blobs().get(fileName));
+            writeFile(fileName, targetCommit.blobs().get(fileName), localBlobDir);
         } else if (args.length == 1) {
             String targetBranch = args[0];
             if(!branches.containsKey(targetBranch)) {
                 System.out.println("No such branch exists.");
                 return;
             }
-            if(targetBranch.equals(currentBranchName)) {
+            if(head == branches.get(targetBranch)) {
                 System.out.println("No need to checkout the current branch.");
                 return;
             }
             updateUntrackedFiles();
             for (String fileName : untrackedFiles) {
                 if(branches.get(targetBranch).blobs().containsKey(fileName)) {
-                    System.out.println("There is an untracked file in the way; delete it, or add and commit it first.");
+                    System.out.println("There is an untracked file in the way; delete it, or add and commit it first : " + fileName + ".");
                     return;
                 }
             }
             head = branches.get(targetBranch);
             currentBranchName = targetBranch;
             for (String fileName : head.blobs().keySet()) {
-                writeFile(fileName, head.blobs().get(fileName));
+                writeFile(fileName, head.blobs().get(fileName), localBlobDir);
             }
             stagingArea.clear();
             removedFiles.clear();
@@ -216,11 +216,16 @@ public class CommitTree implements Serializable {
         }
     }
 
-    private void writeFile(String fileName, String id) {
-        File to = new File(fileName);
-        File from = new File(".gitlet/blobs/" + id);
-        byte[] content = Utils.readContents(from);
-        Utils.writeContents(to, content);
+    private void writeFile(String fileName, String id, String directory) {
+        File target, source;
+        if (directory.equals(localBlobDir)) {
+            target = new File(fileName);
+        } else {
+            target = new File(directory.substring(0, directory.length() - ".gitlet/blobs/".length()) + fileName);
+        }
+        source = new File(directory + id);
+        byte[] content = Utils.readContents(source);
+        Utils.writeContents(target, content);
     }
 
     public void branch(String branch) {
@@ -269,11 +274,22 @@ public class CommitTree implements Serializable {
         if (mergeFailureCases(branch)) {
             return;
         }
-        CommitNode splitPoint = getSplitPoint(branch);
+        CommitNode splitPoint = getSplitPoint(this, branch);
         if (splitPoint == null) {
             System.out.println("Error");
             return;
         }
+        if (splitPoint == branches.get(branch)) {
+            System.out.println("Given branch is an ancestor of the current branch.");
+            return;
+        }
+        if (splitPoint == head) {
+            String[] input = new String[]{branch};
+            checkout(input);
+            System.out.println("Current branch fast-forwarded.");
+            return;
+        }
+
         CommitNode branchHead = branches.get(branch);
 
         for (String file : branchHead.blobs().keySet()) {
@@ -362,12 +378,12 @@ public class CommitTree implements Serializable {
         stagingArea.add(fileName);
     }
 
-    private CommitNode getSplitPoint(String branch) {
+    private CommitNode getSplitPoint(CommitTree commitTree, String branch) {
         Queue<CommitNode> queue = new LinkedList<>();
         queue.offer(head);
         while (!queue.isEmpty()) {
             CommitNode node = queue.poll();
-            if (isAncestor(node, branches.get(branch))) {
+            if (isAncestor(commitTree, node, commitTree.branches.get(branch))) {
                 return node;
             }
             CommitNode firstParent = idToCommits.get(node.firstParent());
@@ -382,16 +398,16 @@ public class CommitTree implements Serializable {
         return null;
     }
 
-    private boolean isAncestor(CommitNode ancestor, CommitNode son) {
+    private boolean isAncestor(CommitTree commitTree, CommitNode ancestor, CommitNode son) {
         Queue<CommitNode> queue = new LinkedList<>();
         queue.offer(son);
         while (!queue.isEmpty()) {
             CommitNode node = queue.poll();
-            if(node == ancestor) {
+            if(node.ID().equals(ancestor.ID())) {
                 return true;
             }
-            CommitNode firstParent = idToCommits.get(node.firstParent());
-            CommitNode secondParent = idToCommits.get(node.secondParent());
+            CommitNode firstParent = commitTree.idToCommits.get(node.firstParent());
+            CommitNode secondParent = commitTree.idToCommits.get(node.secondParent());
             if(firstParent != null) {
                 queue.offer(firstParent);
             }
@@ -400,5 +416,249 @@ public class CommitTree implements Serializable {
             }
         }
         return false;
+    }
+
+    // ******REMOTE FEATURES*******************
+
+    public void addRemote(String[] args) {
+        String remoteName = args[1];
+        String remoteLocation = args[2];
+        if (remoteLoc.containsKey(remoteName)) {
+            System.out.println("A remote with that name already exists.");
+            return;
+        }
+        remoteLoc.put(remoteName, remoteLocation);
+    }
+
+    public void rmRemote(String remoteName) {
+        if (!remoteLoc.containsKey(remoteName)) {
+            System.out.println("A remote with that name does not exist.");
+            return;
+        }
+        remoteLoc.remove(remoteName);
+    }
+
+    public void push(String[] args) {
+        String remoteName = args[1];
+        String remoteBranchName = args[2];
+        if (!remoteLoc.containsKey(remoteName)) {
+            System.out.println("Remote directory not found.");
+            return;
+        }
+        String remoteLocation = remoteLoc.get(remoteName);
+        CommitTree remoteCommitTree = getRemoteCommitTree(remoteName);
+        if (remoteCommitTree == null) {
+            System.out.println("Remote gitlet not initialized");
+            return;
+        }
+        if (!remoteCommitTree.branches.containsKey(remoteBranchName)) {
+            if (isInHistory(remoteCommitTree.head)) {
+                remoteCommitTree.branch(remoteBranchName);
+            } else {
+                System.out.println("Please pull down remote changes before pushing.");
+                return;
+            }
+        }
+        if (!remoteCommitTree.currentBranchName.equals(remoteBranchName)) {
+            remoteCommitTree.remoteCheckoutBranch(remoteBranchName, remoteLocation);
+        }
+        if (!isInHistory(remoteCommitTree.head)) {
+            System.out.println("Please pull down remote changes before pushing.");
+            return;
+        }
+        CommitNode startPoint = remoteCommitTree.head;
+        Stack<CommitNode> stack = new Stack<>();
+        Queue<CommitNode> queue = new LinkedList<>();
+        queue.offer(head);
+        while (!queue.isEmpty()) {
+            CommitNode node = queue.poll();
+            if (node.ID().equals(startPoint.ID())) {
+                break;
+            }
+            if (node.firstParent() != null) {
+                queue.offer(idToCommits.get(node.firstParent()));
+            }
+            if (node.secondParent() != null) {
+                queue.offer(idToCommits.get(node.secondParent()));
+            }
+            stack.push(node);
+        }
+        while (!stack.isEmpty()) {
+            CommitNode newCommit = stack.pop().copy();
+            if (newCommit.firstParent().equals(remoteCommitTree.head.ID())
+                    || (newCommit.secondParent() != null && newCommit.secondParent().equals(remoteCommitTree.head.ID()))) {
+                remoteCommitTree.appendCommit(currentBranchName, newCommit);
+                remoteCommitTree.head = newCommit;
+                copyBlobsToRemote(newCommit, remoteLocation);
+            }
+        }
+        remoteCommitTree.remoteCheckoutBranch(remoteBranchName, remoteLocation);
+        saveRemoteCommitTree(remoteLocation, remoteCommitTree);
+        System.out.println("push succeed.");
+    }
+
+    private void remoteCheckoutBranch(String targetBranch, String remoteLocation) {
+        if(!branches.containsKey(targetBranch)) {
+            System.out.println("No such branch exists.");
+            return;
+        }
+        head = branches.get(targetBranch);
+        currentBranchName = targetBranch;
+        for (String fileName : head.blobs().keySet()) {
+            writeFile(fileName, head.blobs().get(fileName), remoteLocation + "/blobs/");
+        }
+        stagingArea.clear();
+        removedFiles.clear();
+    }
+
+    private boolean isInHistory(CommitNode node){
+        Queue<CommitNode> queue = new LinkedList<>();
+        queue.offer(head);
+        while (!queue.isEmpty()) {
+            CommitNode curr = queue.poll();
+            if (curr.ID().equals(node.ID())) {
+                return true;
+            }
+            if (curr.firstParent() != null) {
+                queue.offer(idToCommits.get(curr.firstParent()));
+            }
+            if (curr.secondParent() != null) {
+                queue.offer(idToCommits.get(curr.secondParent()));
+            }
+        }
+        return false;
+    }
+
+    private void copyBlobsToRemote(CommitNode Commit, String remoteLocation) {
+        for (String blob : Commit.blobs().keySet()) {
+            String blobId = Commit.blobs().get(blob);
+            File sourceBlob = new File(".gitlet/blobs/" + blobId);
+            File targetBlob = new File(remoteLocation + "/blobs/" + blobId);
+            byte[] content = Utils.readContents(sourceBlob);
+            Utils.writeContents(targetBlob, content);
+        }
+    }
+
+    private void copyBlobsToLocal(CommitNode Commit, String remoteLocation) {
+        for (String blob : Commit.blobs().keySet()) {
+            String blobId = Commit.blobs().get(blob);
+            File sourceBlob = new File(remoteLocation + "/blobs/" + blobId);
+            File targetBlob = new File(".gitlet/blobs/" + blobId);
+            byte[] content = Utils.readContents(sourceBlob);
+            Utils.writeContents(targetBlob, content);
+        }
+    }
+
+    public void appendCommit(String branchName, CommitNode newCommit) {
+        idToCommits.put(newCommit.ID(), newCommit);
+        branches.put(branchName, newCommit);
+    }
+
+    private void saveRemoteCommitTree(String remoteLocation, CommitTree CommitTreeToSave) {
+        File remoteCommitTreeFile = new File(remoteLocation + "/commitTree");
+        try {
+            ObjectOutputStream out = new ObjectOutputStream(new FileOutputStream(remoteCommitTreeFile));
+            out.writeObject(CommitTreeToSave);
+            out.close();
+        } catch (IOException e) {
+            System.out.println("error.");
+        }
+    }
+
+    private CommitTree getRemoteCommitTree(String remoteName) {
+        CommitTree remoteCommitTree;
+        String remoteLocation = remoteLoc.get(remoteName);
+        String path = (remoteLocation + "/commitTree");
+        File remoteCommitTreeFile = new File(path);
+        try {
+            ObjectInputStream inp = new ObjectInputStream(new FileInputStream(remoteCommitTreeFile));
+            remoteCommitTree = (CommitTree) inp.readObject();
+            inp.close();
+        } catch (IOException | ClassNotFoundException excp) {
+            System.out.println("error.");
+            remoteCommitTree = null;
+        }
+        return remoteCommitTree;
+    }
+
+    public boolean fetch(String[] args) {
+        String remoteName = args[1];
+        String remoteBranchName = args[2];
+        String branchName = remoteName + "/" + remoteBranchName;
+        if (!remoteLoc.containsKey(remoteName)) {
+            System.out.println("Remote directory not found.");
+            return false;
+        }
+        String remoteLocation = remoteLoc.get(remoteName);
+        CommitTree remoteCommitTree = getRemoteCommitTree(remoteName);
+        if (!remoteCommitTree.branches.containsKey(remoteBranchName)) {
+            System.out.println("That remote does not have that branch.");
+            return false;
+        }
+        CommitNode startPoint;
+        if (branches.containsKey(branchName)) {
+            startPoint = branches.get(branchName);
+        } else {
+            startPoint = getSplitPoint(remoteCommitTree, remoteBranchName);
+            branches.put(branchName, startPoint);
+        }
+        if (startPoint == null) {
+            System.out.println("Error");
+            return false;
+        }
+        CommitNode remoteCommit = remoteCommitTree.branches.get(remoteBranchName);
+        Stack<CommitNode> stack = new Stack<>();
+        while (!startPoint.ID().equals(remoteCommit.ID())) {
+            stack.push(remoteCommit);
+            remoteCommit = remoteCommitTree.idToCommits.get(remoteCommit.firstParent());
+    }
+        while (!stack.isEmpty()) {
+            CommitNode newCommit = stack.pop().copy();
+            this.appendCommit(branchName, newCommit);
+            copyBlobsToLocal(newCommit, remoteLocation);
+        }
+        System.out.println("fetch succeed.");
+        return true;
+    }
+
+    public void pull(String[] args) {
+        String remoteName = args[1];
+        String remoteBranchName = args[2];
+        String branchName = remoteName + "/" + remoteBranchName;
+        if(fetch(args)) {
+            merge(branchName);
+        }
+    }
+
+    public void clone(String remoteName) {
+        if (!remoteLoc.containsKey(remoteName)) {
+            System.out.println("Remote directory not found.");
+            return;
+        }
+        String remoteLocation = remoteLoc.get(remoteName);
+        String blobPath = remoteLocation + "/blobs";
+
+        File blobFolder = new File(blobPath);
+        File[] listOfFiles = blobFolder.listFiles();
+        assert listOfFiles != null;
+        for (File file : listOfFiles) {
+            runCommand("scp " + blobPath + "/" + file.getName() + " " + ".gitlet/blobs");
+        }
+        runCommand("scp " + remoteLocation + "/commitTree" + " " + ".gitlet");
+    }
+
+    public void runCommand(String command) {
+        System.out.println("Running command: " + command);
+        try {
+            Process p = Runtime.getRuntime().exec(command);
+            BufferedReader stdInput = new BufferedReader(new InputStreamReader(p.getInputStream()));
+            BufferedReader stdError = new BufferedReader(new InputStreamReader(p.getErrorStream()));
+            p.waitFor();
+            stdInput.close();
+            stdError.close();
+        } catch (IOException | InterruptedException e) {
+            System.out.println("Exception while running command: " + command + " -- " + e);
+            e.printStackTrace();
+        }
     }
 }

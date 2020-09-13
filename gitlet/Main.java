@@ -107,6 +107,24 @@ public class Main {
                 case "merge":
                     mergeCommand(args);
                     break;
+                case "add-remote":
+                    addRemoteCommand(args);
+                    break;
+                case "rm-remote":
+                    rmRemoteCommand(args);
+                    break;
+                case "push":
+                    pushCommand(args);
+                    break;
+                case "fetch":
+                    fetchCommand(args);
+                    break;
+                case "pull":
+                    pullCommand(args);
+                    break;
+                case "clone":
+                    cloneCommand(args);
+                    break;
                 default:
                     System.out.println("No command with that name exists.");
             }
@@ -207,5 +225,51 @@ public class Main {
         }
         commitTree.merge(args[1]);
         serializeCommitTree();
+    }
+
+    private static void addRemoteCommand(String[] args) {
+        if (commandIsNotValid(args, 3)) {
+            return;
+        }
+        commitTree.addRemote(args);
+        serializeCommitTree();
+    }
+
+    private static void rmRemoteCommand(String[] args) {
+        if (commandIsNotValid(args, 2)) {
+            return;
+        }
+        commitTree.rmRemote(args[1]);
+        serializeCommitTree();
+    }
+
+    private static void pushCommand(String[] args) {
+        if (commandIsNotValid(args, 3)) {
+            return;
+        }
+        commitTree.push(args);
+    }
+
+    private static void fetchCommand(String[] args) {
+        if (commandIsNotValid(args, 3)) {
+            return;
+        }
+        commitTree.fetch(args);
+        serializeCommitTree();
+    }
+
+    private static void pullCommand(String[] args) {
+        if (commandIsNotValid(args, 3)) {
+            return;
+        }
+        commitTree.pull(args);
+        serializeCommitTree();
+    }
+
+    private static void cloneCommand(String[] args) {
+        if (commandIsNotValid(args, 2)) {
+            return;
+        }
+        commitTree.clone(args[1]);
     }
  }
