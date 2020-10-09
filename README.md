@@ -3,6 +3,8 @@ Gitlet is a version control system inspired by the popular system **Git**. It is
 
 Gitlet mimics some features of Git. It supports operations such as **add, commit, status, log, checkout, reset, branch, merge**. Some remote features are also implemented such as **add-remote, pull, fetch, push** and **clone**.
 
+![](demo.png)
+
 ## How to Use
 Clone this repository to your local machine:
 ```
